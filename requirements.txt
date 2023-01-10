@@ -1,0 +1,4 @@
+requests-futures
+requests
+pillow
+tqdm
