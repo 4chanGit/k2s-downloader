@@ -3,12 +3,14 @@ import io
 import re
 import json
 import math
-import pathlib
 import time
 import random
+import pathlib
 import argparse
 import threading
 import contextlib
+import subprocess
+from shutil import which
 from typing import Dict, List
 
 import requests
@@ -26,6 +28,13 @@ START_TIME = time.time()
 
 BYTES_PER_SPLIT = 1024 * 1024 * 16
 BLOCK_SIZE = 1024 * 32
+
+def parse_size(size: str) -> int:
+    units = {"B": 1, "KB": 2**10, "MB": 2**20, "GB": 2**30, "TB": 2**40 ,
+             "":  1, "KIB": 10**3, "MIB": 10**6, "GIB": 10**9, "TIB": 10**12}
+    m = re.match(r'^([\d\.]+)\s*([a-zA-Z]{0,3})$', str(size).strip())
+    number, unit = float(m.group(1)), m.group(2).upper()
+    return int(number*units[unit])
 
 def human_readable_bytes(num: int) -> str:
     for x in ['bytes', 'KB', 'MB', 'GB', 'TB']:
@@ -203,17 +212,22 @@ def main(urls: List[str], filename: str) -> None:
     print("Finished Writing file %s" % filename)
     print('File Size: {} bytes'.format(human_readable_bytes(os.path.getsize(filename))))
 
+def check_vid(video_path: pathlib.Path) -> bool:
+    output = subprocess.check_output(f'ffmpeg -i {video_path} -c copy -f null /dev/null -v warning', shell=True, stderr=subprocess.STDOUT)
+    return not bool(output)
+
+
 if __name__ == '__main__':
 
     parser = argparse.ArgumentParser(description='K2S Downloader')
     parser.add_argument('url', help='k2s url to download', action='store')
     parser.add_argument('--filename', type=str,
                         help='filename to save as',
-                        action='store', dest='filename', required=True)
+                        action='store', dest='filename')
     parser.add_argument('--threads', dest='batch_count', action='store',
                         help='number of connections to use (default 20)', default=20)
     parser.add_argument('--split-size', dest='size', action='store',
-                        help='Size to split at (default 16M)', default=1024 * 1024 * 16)
+                        help='Size to split at (default 20M)', default=1024 * 1024 * 20)
 
     args = parser.parse_args()
 
@@ -222,19 +236,22 @@ if __name__ == '__main__':
         exit()
 
     pathlib.Path("tmp").mkdir(parents=True, exist_ok=True)
-    file_id = re.findall(r"https:\/\/(k2s.cc|keep2share.cc)\/file\/(.*?)(\?|\/).*", args.url)
+    file_id = re.findall(r"https:\/\/(k2s.cc|keep2share.cc)\/file\/(.*?)(\?|\/|$)", args.url)
     if not file_id:
         print("Invalid URL")
         exit()
 
-    if int(args.size) < 1024 * 1024 * 16:
-        print("Split size must be at least 16M")
+    if parse_size(args.size) < 1024 * 1024 * 20:
+        print("Split size must be at least 20M")
         exit()
 
     file_id = file_id[0][1]
-    file_name = args.filename
+    if not args.filename:
+        file_name = k2s.get_name(file_id)
+    else:
+        file_name = args.filename
     batch_count = int(args.batch_count)
-    BYTES_PER_SPLIT = int(args.size)
+    BYTES_PER_SPLIT = parse_size(args.size)
 
     if not pathlib.Path("urls.json").exists():
         with open("urls.json", "w") as f:
@@ -256,4 +273,17 @@ if __name__ == '__main__':
 
     URL_LOCKS = [threading.Lock() for _ in range(batch_count)]
     START_TIME = time.time()
-    main(urls, file_name)
+    redownloaded = False
+
+    while True:
+        main(urls, file_name)
+        if which("ffmpeg"):
+            if not check_vid(pathlib.Path(file_name)):
+                if not redownloaded:
+                    print("Video is corrupted. Redownloading with a larger chunk size.")
+                    redownloaded = True
+                    BYTES_PER_SPLIT *= 2
+                    continue
+                else:
+                    print("Video is still corrupted. Skipping.")
+        break

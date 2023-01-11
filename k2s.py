@@ -15,8 +15,8 @@ from utils import get_working_proxies
 DOMAINS = [
     # "keep2share.cc",
     "k2s.cc",
-    "tezfiles.com",
-    "fboom.me",
+    # "tezfiles.com",
+    # "fboom.me",
     # "fast-download.me"
 ]
 
@@ -62,7 +62,9 @@ def generate_download_urls(file_id: str, count: int = 1, skip: int = 0) -> list:
                     "captcha_challenge": captcha["challenge"],
                     "captcha_response": response
                 }, proxies=prox, timeout=5).json()
-            except:
+            except KeyboardInterrupt:
+                sys.exit()
+            except :
                 break
 
             if free_r['status'] == "error":
@@ -71,14 +73,16 @@ def generate_download_urls(file_id: str, count: int = 1, skip: int = 0) -> list:
                     im = Image.open(BytesIO(r.content))
                     im.show()
                     response = input(f"Enter captcha response: ")
-                continue
+                    continue
+                elif free_r["message"] == "File not found":
+                    sys.exit("File not found")
 
             if "time_wait" not in free_r:
                 working_link = True
                 break
 
             if free_r['time_wait'] > 30:
-                continue
+                break
 
             for i in range(free_r['time_wait'] - 1):
                 print(f"\033[K[{url}] Waiting {free_r['time_wait'] - i} seconds...", end='\r')
@@ -116,3 +120,9 @@ def generate_download_urls(file_id: str, count: int = 1, skip: int = 0) -> list:
         raise Exception("No working links found")
 
     return urls[:count]
+
+def get_name(file_id: str) -> str:
+    r = requests.post(f"https://{choice(DOMAINS)}/api/v2/getFilesInfo", json={
+        "ids": [file_id]
+    }).json()
+    return r['files'][0]['name']
